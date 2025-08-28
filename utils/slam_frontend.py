@@ -1,5 +1,6 @@
 import time
 
+import cv2
 import numpy as np
 import torch
 import torch.multiprocessing as mp
@@ -13,7 +14,7 @@ from utils.logging_utils import Log
 from utils.multiprocessing_utils import clone_obj
 from utils.pose_utils import update_pose
 from utils.slam_utils import get_loss_tracking, get_median_depth
-
+from utils.visual import visualize_depth_map_cv2
 class FrontEnd(mp.Process):
     def __init__(self, config):
         super().__init__()
@@ -362,6 +363,11 @@ class FrontEnd(mp.Process):
                     
                     color_paths = self.dataset.color_paths[start_idx:end_idx]
                     self.vggtl.update(color_paths)
+                    
+                    gt_color, gt_depth, gt_pose = self.dataset[start_idx]
+                    visualize_depth_map_cv2(self.vggtl.current_chunk_data['depth'][0], "test_output/depth_map_vggtl.jpg", colormap=cv2.COLORMAP_JET)
+                    visualize_depth_map_cv2(gt_depth, "test_output/depth_map_gt_depth.jpg", colormap=cv2.COLORMAP_JET)
+                    exit(0)
                     self.request_chunk_init(cur_frame_idx, self.vggtl.aligned_point_cloud_dir + f'/chunk_{self.vggtl.current_chunk_idx}.ply')
 
             if self.frontend_queue.empty():
