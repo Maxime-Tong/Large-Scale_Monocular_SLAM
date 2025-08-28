@@ -37,6 +37,8 @@ class BackEnd(mp.Process):
         self.current_window = []
         self.initialized = not self.monocular
         self.keyframe_optimizers = None
+        
+        self.vggtl_point_cloud_dir = None
 
     def set_hyperparams(self):
         self.save_results = self.config["Results"]["save_results"]
@@ -405,6 +407,14 @@ class BackEnd(mp.Process):
                     )
                     self.initialize_map(cur_frame_idx, viewpoint)
                     self.push_to_frontend("init")
+                
+                elif data[0] == "chunk_init":
+                    cur_frame_idx = data[1]
+                    ply_path = data[2]
+                    fused_point_cloud, features, scales, rots, opacities = (
+                        self.gaussians.create_pcd_from_ply(ply_path)
+                    )
+                    self.gaussians.extend_from_pcd(fused_point_cloud, features, scales, rots, opacities, kf_id=cur_frame_idx)
 
                 elif data[0] == "keyframe":
                     cur_frame_idx = data[1]

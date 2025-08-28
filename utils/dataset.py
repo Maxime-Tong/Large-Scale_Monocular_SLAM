@@ -15,6 +15,36 @@ try:
 except Exception:
     pass
 
+class SJTUParser:
+    def __init__(self, input_folder):
+        self.input_folder = input_folder
+        self.color_paths = sorted(glob.glob(f"{self.input_folder}/keyframe_*.jpg"))
+        self.n_img = len(self.color_paths)
+        # self.depth_paths = sorted(glob.glob(f"{self.input_folder}/results/depth_*.png"))
+        # self.load_poses(f"{self.input_folder}/traj.txt")
+        self.depth_paths = None
+        self.poses = None
+        self.frames = None
+
+    def load_poses(self, path):
+        self.poses = []
+        with open(path, "r") as f:
+            lines = f.readlines()
+
+        frames = []
+        for i in range(self.n_img):
+            line = lines[i]
+            pose = np.array(list(map(float, line.split()))).reshape(4, 4)
+            pose = np.linalg.inv(pose)
+            self.poses.append(pose)
+            frame = {
+                "file_path": self.color_paths[i],
+                "depth_path": self.depth_paths[i],
+                "transform_matrix": pose.tolist(),
+            }
+
+            frames.append(frame)
+        self.frames = frames
 
 class ReplicaParser:
     def __init__(self, input_folder):
@@ -403,6 +433,15 @@ class TUMDataset(MonocularDataset):
         self.depth_paths = parser.depth_paths
         self.poses = parser.poses
 
+class SJTUDataset(MonocularDataset):
+    def __init__(self, args, path, config):
+        super().__init__(args, path, config)
+        dataset_path = config["Dataset"]["dataset_path"]
+        parser = SJTUParser(dataset_path)
+        self.num_imgs = parser.n_img
+        self.color_paths = parser.color_paths
+        self.depth_paths = parser.depth_paths
+        self.poses = parser.poses
 
 class ReplicaDataset(MonocularDataset):
     def __init__(self, args, path, config):

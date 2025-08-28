@@ -1,5 +1,6 @@
 import os
 import sys
+import glob
 import time
 from argparse import ArgumentParser
 from datetime import datetime
@@ -20,6 +21,35 @@ from utils.logging_utils import Log
 from utils.multiprocessing_utils import FakeQueue
 from utils.slam_backend import BackEnd
 from utils.slam_frontend import FrontEnd
+
+import signal
+def cleanup_processes():
+    print("正在清理子进程...")
+    for p in mp.active_children():
+        if p.is_alive():
+            p.terminate()
+    for p in mp.active_children():
+        p.join(timeout=1)
+
+def signal_handler(sig, frame):
+    cleanup_processes()
+    os._exit(1)
+
+# 注册信号
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# 确保程序退出时也清理
+import atexit
+atexit.register(cleanup_processes)
+
+
+module_path = os.path.join(os.path.dirname(__file__), 'vggtl')
+sys.path.insert(0, module_path)
+
+from models import VGGT_Long
+from loop_utils.config_utils import load_config as load_config_vggtl
+from vggt.utils.load_fn import load_and_preprocess_images
 
 
 class SLAM:
@@ -80,6 +110,13 @@ class SLAM:
         self.frontend.q_main2vis = q_main2vis
         self.frontend.q_vis2main = q_vis2main
         self.frontend.set_hyperparams()
+        
+        # img_dir = '/data/xthuang/SLAM/large_scale/data/video'
+        # img_list = sorted(glob.glob(os.path.join(img_dir, "*.jpg")) + 
+                                        # glob.glob(os.path.join(img_dir, "*.png")))
+        config = load_config_vggtl('vggtl/configs/base_config.yaml')
+        self.vggtl = VGGT_Long(save_dir=save_dir, config=config)
+        self.frontend.vggtl = self.vggtl
 
         self.backend.gaussians = self.gaussians
         self.backend.background = self.background
@@ -89,6 +126,7 @@ class SLAM:
         self.backend.frontend_queue = frontend_queue
         self.backend.backend_queue = backend_queue
         self.backend.live_mode = self.live_mode
+        self.backend.vggtl_point_cloud_dir = self.vggtl.aligned_point_cloud_dir
 
         self.backend.set_hyperparams()
 
@@ -202,6 +240,7 @@ if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
     parser.add_argument("--config", type=str)
+    parser.add_argument("--data", type=str, default=None)
     parser.add_argument("--eval", action="store_true")
 
     args = parser.parse_args(sys.argv[1:])
@@ -213,6 +252,9 @@ if __name__ == "__main__":
 
     config = load_config(args.config)
     save_dir = None
+    
+    if args.data is not None:
+        config['Dataset']['dataset_path'] = args.data
 
     if args.eval:
         Log("Running MonoGS in Evaluation Mode")

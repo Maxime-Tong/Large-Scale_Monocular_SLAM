@@ -14,7 +14,6 @@ from utils.multiprocessing_utils import clone_obj
 from utils.pose_utils import update_pose
 from utils.slam_utils import get_loss_tracking, get_median_depth
 
-
 class FrontEnd(mp.Process):
     def __init__(self, config):
         super().__init__()
@@ -42,6 +41,9 @@ class FrontEnd(mp.Process):
         self.cameras = dict()
         self.device = "cuda:0"
         self.pause = False
+        
+        self.vggtl = None
+        self.cur_chunk_data = None
 
     def set_hyperparams(self):
         self.save_dir = self.config["Results"]["save_dir"]
@@ -128,6 +130,13 @@ class FrontEnd(mp.Process):
     def tracking(self, cur_frame_idx, viewpoint):
         prev = self.cameras[cur_frame_idx - self.use_every_n_frames]
         viewpoint.update_RT(prev.R, prev.T)
+        # cur_frame_idx_in_chunk = cur_frame_idx - self.vggtl.current_chunk_idx * self.vggtl.step
+        # pose = self.vggtl.current_chunk_poses[cur_frame_idx_in_chunk]
+        # w2c = np.linalg.inv(pose)
+        # viewpoint.update_RT(
+        #     torch.from_numpy(w2c[:3, :3]).float(),
+        #     torch.from_numpy(w2c[:3, 3]).float()
+        # )
 
         opt_params = []
         opt_params.append(
@@ -298,6 +307,10 @@ class FrontEnd(mp.Process):
         msg = ["init", cur_frame_idx, viewpoint, depth_map]
         self.backend_queue.put(msg)
         self.requested_init = True
+    
+    def request_chunk_init(self, cur_frame_idx, pcd_path): # no need to sync with backend!
+        msg = ["chunk_init", cur_frame_idx, pcd_path]
+        self.backend_queue.put(msg)
 
     def sync_backend(self, data):
         self.gaussians = data[1]
@@ -341,6 +354,15 @@ class FrontEnd(mp.Process):
                     continue
                 else:
                     self.backend_queue.put(["unpause"])
+                    
+            if self.vggtl is not None:
+                if cur_frame_idx < len(self.dataset) and cur_frame_idx >= (self.vggtl.current_chunk_idx + 1) * self.vggtl.step:
+                    start_idx = cur_frame_idx
+                    end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
+                    
+                    color_paths = self.dataset.color_paths[start_idx:end_idx]
+                    self.vggtl.update(color_paths)
+                    self.request_chunk_init(cur_frame_idx, self.vggtl.aligned_point_cloud_dir + f'/chunk_{self.vggtl.current_chunk_idx}.ply')
 
             if self.frontend_queue.empty():
                 tic.record()

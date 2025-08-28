@@ -103,7 +103,53 @@ class GaussianModel:
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
+            
+    def create_pcd_from_ply(self, ply_path):
+        point_size = self.config["Dataset"]["point_size"]
+        
+        plydata = PlyData.read(ply_path)
+        xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
+                    np.asarray(plydata.elements[0]["y"]),
+                    np.asarray(plydata.elements[0]["z"])), axis=1)
+        rgb = np.stack((np.asarray(plydata.elements[0]["red"]),
+                    np.asarray(plydata.elements[0]["green"]),
+                    np.asarray(plydata.elements[0]["blue"])), axis=1)
+        
+        pcd = BasicPointCloud(
+            points=xyz, colors=rgb, normals=np.zeros((xyz.shape[0], 3))
+        )
+        fused_point_cloud = torch.from_numpy(np.asarray(pcd.points)).float().cuda()
+        fused_color = RGB2SH(torch.from_numpy(np.asarray(pcd.colors)).float().cuda())
+        features = (
+            torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2))
+            .float()
+            .cuda()
+        )
+        features[:, :3, 0] = fused_color
+        features[:, 3:, 1:] = 0.0
 
+        dist2 = (
+            torch.clamp_min(
+                distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()),
+                0.0000001,
+            )
+            * point_size
+        )
+        scales = torch.log(torch.sqrt(dist2))[..., None]
+        if not self.isotropic:
+            scales = scales.repeat(1, 3)
+
+        rots = torch.zeros((fused_point_cloud.shape[0], 4), device="cuda")
+        rots[:, 0] = 1
+        opacities = inverse_sigmoid(
+            0.5
+            * torch.ones(
+                (fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"
+            )
+        )
+        
+        return fused_point_cloud, features, scales, rots, opacities
+    
     def create_pcd_from_image(self, cam_info, init=False, scale=2.0, depthmap=None):
         cam = cam_info
         image_ab = (torch.exp(cam.exposure_a)) * cam.original_image + cam.exposure_b
