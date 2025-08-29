@@ -43,7 +43,8 @@ class FrontEnd(mp.Process):
         self.pause = False
         
         self.vggtl = None
-        self.cur_chunk_data = None
+        self.chunk_data = None
+        self.use_vggtl_depth = True
 
     def set_hyperparams(self):
         self.save_dir = self.config["Results"]["save_dir"]
@@ -63,7 +64,11 @@ class FrontEnd(mp.Process):
         gt_img = viewpoint.original_image.cuda()
         valid_rgb = (gt_img.sum(dim=0) > rgb_boundary_threshold)[None]
         if self.monocular:
-            if depth is None:
+            if self.use_vggtl_depth:
+                frame_idx_in_chunk = cur_frame_idx - self.vggtl.current_chunk_idx * self.vggtl.step
+                initial_depth = torch.from_numpy(self.chunk_data['depth_upsampled'][frame_idx_in_chunk]).unsqueeze(0)
+                initial_depth[~valid_rgb.cpu()] = 0.
+            elif depth is None:
                 initial_depth = 2 * torch.ones(1, gt_img.shape[1], gt_img.shape[2])
                 initial_depth += torch.randn_like(initial_depth) * 0.3
             else:
@@ -361,8 +366,9 @@ class FrontEnd(mp.Process):
                     end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
                     
                     color_paths = self.dataset.color_paths[start_idx:end_idx]
-                    self.vggtl.update(color_paths)
-                    self.request_chunk_init(cur_frame_idx, self.vggtl.aligned_point_cloud_dir + f'/chunk_{self.vggtl.current_chunk_idx}.ply')
+                    self.chunk_data = self.vggtl.update(color_paths)
+                    # if self.initialized:
+                    # self.request_chunk_init(cur_frame_idx, self.vggtl.aligned_point_cloud_dir + f'/chunk_{self.vggtl.current_chunk_idx}.ply')
 
             if self.frontend_queue.empty():
                 tic.record()

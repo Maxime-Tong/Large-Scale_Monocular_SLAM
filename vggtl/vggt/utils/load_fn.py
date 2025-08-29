@@ -94,7 +94,7 @@ def load_and_preprocess_images_square(image_path_list, target_size=1024):
     return images, original_coords
 
 
-def load_and_preprocess_images(image_path_list, mode="crop"):
+def load_and_preprocess_images(image_path_list, mode="crop", return_originals=False):
     """
     A quick start function to load and preprocess images for model input.
     This assumes the images should have the same shape for easier batching, but our model can also work well with different shapes.
@@ -134,11 +134,12 @@ def load_and_preprocess_images(image_path_list, mode="crop"):
     to_tensor = TF.ToTensor()
     target_size = 518
 
+    originals = []
     # First process all images and collect their shapes
     for image_path in image_path_list:
         # Open image
         img = Image.open(image_path)
-
+        originals.append(np.array(img, dtype=np.uint8))
         # If there's an alpha channel, blend onto white background:
         if img.mode == "RGBA":
             # Create white background
@@ -226,5 +227,7 @@ def load_and_preprocess_images(image_path_list, mode="crop"):
         # Verify shape is (1, C, H, W)
         if images.dim() == 3:
             images = images.unsqueeze(0)
-
+            
+    if return_originals:
+        return images, np.stack(originals, axis=0)
     return images

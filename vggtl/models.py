@@ -47,7 +47,16 @@ def sim3_transform(prev_sim3, curr_sim3):
     t_new = prev_s * (prev_R @ curr_t) + prev_t
     return s_new, R_new, t_new
     
+def joint_bilateral_upsampling_batch(depths, images, radius=8, eps=1e-3):
+    B, H, W, C = images.shape
     
+    depths_upsampled = []
+    for depth, image in zip(depths, images):
+        # d_refined = cv2.ximgproc.guidedFilter(guide=image, src=d_init, radius=radius, eps=eps)
+        d_refined = cv2.resize(depth, (W, H), interpolation=cv2.INTER_CUBIC).astype(np.float32)
+        depths_upsampled.append(d_refined)
+    return np.stack(depths_upsampled, axis=0)
+
 class VGGT_Long:
     def __init__(self, save_dir, config):
         self.config = config
@@ -138,12 +147,27 @@ class VGGT_Long:
         data = np.concatenate([t_vec, q, np.array([s])])
         return pp.Sim3(torch.from_numpy(data).float().to(self.device))
     
+    def align_chunk_pair(self, source_chunk_data, target_chunk_data):
+        source_points = source_chunk_data['world_points']
+        source_confs = source_chunk_data['world_points_conf']
+        target_points = target_chunk_data['world_points']
+        target_confs = target_chunk_data['world_points_conf']
+        
+        s_rel, R_rel, t_rel = weighted_align_point_maps(
+            target_points, target_confs, source_points, source_confs,
+            conf_threshold=self.conf_threshold, config=self.config
+        )
+        aligned_points = apply_sim3_direct(source_points, s_rel, R_rel, t_rel)
+
+        return aligned_points, (s_rel, R_rel, t_rel) 
+    
     def update(self, image_paths):
-        images = load_and_preprocess_images(image_paths, mode='crop').to(self.device)
+        images_crop, images = load_and_preprocess_images(image_paths, mode='crop', return_originals=True)
+        images_crop = images_crop.to(self.device)
         
         previous_idx = self.current_chunk_idx
         current_idx = self.current_chunk_idx + 1
-        current_data = self.process_single_chunk(images, chunk_idx=current_idx)
+        current_data = self.process_single_chunk(images_crop, chunk_idx=current_idx)
         
         if current_idx > 0:
             print(f"Aligning chunk {current_idx} to chunk {previous_idx}")
@@ -190,8 +214,12 @@ class VGGT_Long:
             aligned_c2w = S @ c2w
             current_chunk_poses.append(aligned_c2w)
         
+        current_data['depth_upsampled'] = joint_bilateral_upsampling_batch(depths = current_data['depth'], images = images)
+        
         self.current_chunk_idx = current_idx
         self.current_chunk_data = current_data
         self.current_chunk_poses = current_chunk_poses 
         self.sim3_list.append(current_sim3)
+        
+        return current_data
         
