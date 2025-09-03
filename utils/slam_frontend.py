@@ -359,16 +359,6 @@ class FrontEnd(mp.Process):
                     continue
                 else:
                     self.backend_queue.put(["unpause"])
-                    
-            if self.vggtl is not None:
-                if cur_frame_idx < len(self.dataset) and cur_frame_idx >= (self.vggtl.current_chunk_idx + 1) * self.vggtl.step:
-                    start_idx = cur_frame_idx
-                    end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
-                    
-                    color_paths = self.dataset.color_paths[start_idx:end_idx]
-                    self.chunk_data = self.vggtl.update(color_paths)
-                    # if self.initialized:
-                    # self.request_chunk_init(cur_frame_idx, self.vggtl.aligned_point_cloud_dir + f'/chunk_{self.vggtl.current_chunk_idx}.ply')
 
             if self.frontend_queue.empty():
                 tic.record()
@@ -405,12 +395,26 @@ class FrontEnd(mp.Process):
                 viewpoint.compute_grad_mask(self.config)
 
                 self.cameras[cur_frame_idx] = viewpoint
-
+                
+                if cur_frame_idx < len(self.dataset) and cur_frame_idx >= (self.vggtl.current_chunk_idx + 1) * self.vggtl.step:
+                    if self.reset: # initalize world coordinates
+                        w2c = np.eye(4)
+                        w2c[:3, :3] = viewpoint.R_gt.cpu().numpy()
+                        w2c[:3, 3] = viewpoint.T_gt.cpu().numpy()
+                        c2w = np.linalg.inv(w2c)
+                        self.vggtl.accumulate_sim3(s=1.0, R=c2w[:3, :3], t=c2w[:3, 3])
+                    start_idx = cur_frame_idx
+                    end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
+                    
+                    color_paths = self.dataset.color_paths[start_idx:end_idx]
+                    self.chunk_data = self.vggtl.update(color_paths)
+                    
                 if self.reset:
                     self.initialize(cur_frame_idx, viewpoint)
                     self.current_window.append(cur_frame_idx)
                     cur_frame_idx += 1
                     continue
+
 
                 self.initialized = self.initialized or (
                     len(self.current_window) == self.window_size
