@@ -179,6 +179,10 @@ class FrontEnd(mp.Process):
                 if data[0] == "sync_backend":
                     self.sync_backend(data)
                     self.requested_submaps -= 1
+                    
+                elif data[0] == 'submap':
+                    self.sync_backend(data)
+                    self.requested_submaps -= 1
 
                 elif data[0] == "stop":
                     Log("Frontend Stopped.")

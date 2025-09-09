@@ -415,11 +415,13 @@ class BackEnd(mp.Process):
                     fused_point_cloud, features, scales, rots, opacities = self.gaussians.create_pcd_from_ply(pcd_path)
                     self.gaussians.extend_from_pcd(fused_point_cloud, features, scales, rots, opacities, kf_id=submap_id)
 
+                    iter_per_kf = self.mapping_itr_num
                     opt_params = []
                     current_window = []
                     for frame_idx in viewpoints:
                         viewpoint = viewpoints[frame_idx]
                         self.viewpoints[frame_idx] = viewpoint
+                        current_window.append(frame_idx)
                         
                         opt_params.append(
                             {
@@ -454,79 +456,11 @@ class BackEnd(mp.Process):
                             }
                         )
                         
-                        current_window.append(frame_idx)
                     self.keyframe_optimizers = torch.optim.Adam(opt_params)
-                    self.map(self.current_window, iters=iter_per_kf)
-                    self.map(self.current_window, prune=True)
-                    self.push_to_frontend("keyframe")   
-                    
-                elif data[0] == "keyframe":
-                    cur_frame_idx = data[1]
-                    viewpoint = data[2]
-                    current_window = data[3]
-                    depth_map = data[4]
+                    self.map(current_window, iters=iter_per_kf)
+                    self.map(current_window, prune=True)
+                    self.push_to_frontend("submap_mapping")   
 
-                    self.viewpoints[cur_frame_idx] = viewpoint
-                    self.current_window = current_window
-                    self.add_next_kf(cur_frame_idx, viewpoint, depth_map=depth_map)
-
-                    opt_params = []
-                    frames_to_optimize = self.config["Training"]["pose_window"]
-                    iter_per_kf = self.mapping_itr_num if self.single_thread else 10
-                    if not self.initialized:
-                        if (
-                            len(self.current_window)
-                            == self.config["Training"]["window_size"]
-                        ):
-                            frames_to_optimize = (
-                                self.config["Training"]["window_size"] - 1
-                            )
-                            iter_per_kf = 50 if self.live_mode else 300
-                            Log("Performing initial BA for initialization")
-                        else:
-                            iter_per_kf = self.mapping_itr_num
-                    for cam_idx in range(len(self.current_window)):
-                        if self.current_window[cam_idx] == 0:
-                            continue
-                        viewpoint = self.viewpoints[current_window[cam_idx]]
-                        if cam_idx < frames_to_optimize:
-                            opt_params.append(
-                                {
-                                    "params": [viewpoint.cam_rot_delta],
-                                    "lr": self.config["Training"]["lr"]["cam_rot_delta"]
-                                    * 0.5,
-                                    "name": "rot_{}".format(viewpoint.uid),
-                                }
-                            )
-                            opt_params.append(
-                                {
-                                    "params": [viewpoint.cam_trans_delta],
-                                    "lr": self.config["Training"]["lr"][
-                                        "cam_trans_delta"
-                                    ]
-                                    * 0.5,
-                                    "name": "trans_{}".format(viewpoint.uid),
-                                }
-                            )
-                        opt_params.append(
-                            {
-                                "params": [viewpoint.exposure_a],
-                                "lr": 0.01,
-                                "name": "exposure_a_{}".format(viewpoint.uid),
-                            }
-                        )
-                        opt_params.append(
-                            {
-                                "params": [viewpoint.exposure_b],
-                                "lr": 0.01,
-                                "name": "exposure_b_{}".format(viewpoint.uid),
-                            }
-                        )
-                    self.keyframe_optimizers = torch.optim.Adam(opt_params)
-
-                    self.map(self.current_window, iters=iter_per_kf)
-                    self.map(self.current_window, prune=True)
-                    self.push_to_frontend("keyframe")
                 else:
                     raise Exception("Unprocessed data", data)
         while not self.backend_queue.empty():

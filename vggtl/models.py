@@ -154,7 +154,7 @@ class VGGT_Long:
         
         save_path = os.path.join(save_dir, filename)
                     
-        predictions['depth'] = np.squeeze(predictions['depth'])
+        # predictions['depth'] = np.squeeze(predictions['depth'])
 
         # np.save(save_path, predictions)
         return predictions
@@ -191,6 +191,7 @@ class VGGT_Long:
         if not self.use_point_map:
             depth_map = current_data["depth"]  # (S, H, W, 1)
             conf = current_data["depth_conf"]  # (S, H, W)
+            # print(depth_map.shape, conf.shape, current_data['extrinsic'].shape, current_data['intrinsic'].shape)
             world_points = unproject_depth_map_to_point_map(depth_map, current_data['extrinsic'], current_data['intrinsic'])
             
             current_data['world_points'] = world_points
@@ -214,6 +215,8 @@ class VGGT_Long:
             
             self.update_current_sim3(s_rel, R_rel, t_rel)
             aligned_points = apply_sim3_direct(current_data['world_points'], *self.current_sim3)
+        else:
+            aligned_points = current_data['world_points']
             
         points = aligned_points.reshape(-1, 3)
         colors = (current_data['images'].transpose(0, 2, 3, 1).reshape(-1, 3) * 255).astype(np.uint8)
