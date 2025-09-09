@@ -51,8 +51,8 @@ class FrontEnd(mp.Process):
         self.window_size = self.config["Training"]["window_size"]
         self.single_thread = self.config["Training"]["single_thread"]
     
-    def request_submap_mapping(self, submap_idx, cameras, pcd_path):
-        msg = ["submap_mapping", submap_idx, cameras, pcd_path']git'
+    def request_submap_mapping(self, submap_idx, viewpoints, pcd_path):
+        msg = ["submap_mapping", submap_idx, viewpoints, pcd_path]
         self.backend_queue.put(msg)
         self.requested_submaps += 1
 
@@ -127,7 +127,7 @@ class FrontEnd(mp.Process):
                 color_paths = self.dataset.color_paths[start_idx:end_idx]
                 self.vggtl.update_submap(color_paths)
                 
-                submap_cameras = {}
+                submap_viewpoints = {}
                 for frame_idx in range(start_idx, end_idx):
                     frame_idx_in_submap = frame_idx - start_idx
                     Rt = self.vggtl.get_frame_RT(frame_idx_in_submap)
@@ -141,12 +141,12 @@ class FrontEnd(mp.Process):
                     if frame_idx % self.kf_interval == 0:
                         self.kf_indices.append(frame_idx)
                         
-                    submap_cameras[frame_idx] = viewpoint             
+                    submap_viewpoints[frame_idx] = viewpoint             
 
-                    self.cleanup(frame_idx)
+                    # self.cleanup(frame_idx)
                 
                 pcd_path = os.path.join(self.vggtl.aligned_point_cloud_dir, f'chunk_{cur_submap_idx}.ply')
-                self.request_submap_mapping(cur_submap_idx, submap_cameras, pcd_path)
+                self.request_submap_mapping(cur_submap_idx, submap_viewpoints, pcd_path)
                 cur_frame_idx = end_idx
                 cur_submap_idx += 1
 

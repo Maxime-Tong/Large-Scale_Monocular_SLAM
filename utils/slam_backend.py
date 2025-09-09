@@ -410,11 +410,56 @@ class BackEnd(mp.Process):
                 
                 elif data[0] == "submap_mapping":
                     submap_id = data[1]
-                    current_cameras = data[2]
+                    viewpoints = data[2]
                     pcd_path = data[3]
                     fused_point_cloud, features, scales, rots, opacities = self.gaussians.create_pcd_from_ply(pcd_path)
                     self.gaussians.extend_from_pcd(fused_point_cloud, features, scales, rots, opacities, kf_id=submap_id)
 
+                    opt_params = []
+                    current_window = []
+                    for frame_idx in viewpoints:
+                        viewpoint = viewpoints[frame_idx]
+                        self.viewpoints[frame_idx] = viewpoint
+                        
+                        opt_params.append(
+                            {
+                                "params": [viewpoint.cam_rot_delta],
+                                "lr": self.config["Training"]["lr"]["cam_rot_delta"]
+                                * 0.5,
+                                "name": "rot_{}".format(viewpoint.uid),
+                            }
+                        )
+                        opt_params.append(
+                            {
+                                "params": [viewpoint.cam_trans_delta],
+                                "lr": self.config["Training"]["lr"][
+                                    "cam_trans_delta"
+                                ]
+                                * 0.5,
+                                "name": "trans_{}".format(viewpoint.uid),
+                            }
+                        )
+                        opt_params.append(
+                            {
+                                "params": [viewpoint.exposure_a],
+                                "lr": 0.01,
+                                "name": "exposure_a_{}".format(viewpoint.uid),
+                            }
+                        )
+                        opt_params.append(
+                            {
+                                "params": [viewpoint.exposure_b],
+                                "lr": 0.01,
+                                "name": "exposure_b_{}".format(viewpoint.uid),
+                            }
+                        )
+                        
+                        current_window.append(frame_idx)
+                    self.keyframe_optimizers = torch.optim.Adam(opt_params)
+                    self.map(self.current_window, iters=iter_per_kf)
+                    self.map(self.current_window, prune=True)
+                    self.push_to_frontend("keyframe")   
+                    
                 elif data[0] == "keyframe":
                     cur_frame_idx = data[1]
                     viewpoint = data[2]
