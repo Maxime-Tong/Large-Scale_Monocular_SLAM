@@ -408,13 +408,12 @@ class BackEnd(mp.Process):
                     self.initialize_map(cur_frame_idx, viewpoint)
                     self.push_to_frontend("init")
                 
-                elif data[0] == "chunk_init":
-                    cur_frame_idx = data[1]
-                    ply_path = data[2]
-                    fused_point_cloud, features, scales, rots, opacities = (
-                        self.gaussians.create_pcd_from_ply(ply_path)
-                    )
-                    self.gaussians.extend_from_pcd(fused_point_cloud, features, scales, rots, opacities, kf_id=cur_frame_idx)
+                elif data[0] == "submap_mapping":
+                    submap_id = data[1]
+                    current_cameras = data[2]
+                    pcd_path = data[3]
+                    fused_point_cloud, features, scales, rots, opacities = self.gaussians.create_pcd_from_ply(pcd_path)
+                    self.gaussians.extend_from_pcd(fused_point_cloud, features, scales, rots, opacities, kf_id=submap_id)
 
                 elif data[0] == "keyframe":
                     cur_frame_idx = data[1]

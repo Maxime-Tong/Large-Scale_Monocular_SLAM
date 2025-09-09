@@ -94,8 +94,9 @@ class VGGT_Long:
         
         self.current_chunk_idx = -1
         self.current_chunk_data = None
-        self.current_chunk_pose = None
         self.current_sim3 = (1.0, np.eye(3), np.zeros(3))
+        
+        self.use_point_map = False
         # if self.sky_mask:
         #     print('Loading skyseg.onnx...')
         #     # Download skyseg.onnx if it doesn't exist
@@ -107,7 +108,7 @@ class VGGT_Long:
         
         print('init done.')
     
-    def accumulate_sim3(self, s, R, t): # R = c2w.R, t = c2w.t
+    def update_current_sim3(self, s, R, t): # R = c2w.R, t = c2w.t
         prev_s, prev_R, prev_t = self.current_sim3
         curr_s, curr_R, curr_t = s, R, t
         
@@ -116,6 +117,14 @@ class VGGT_Long:
         t_new = prev_s * (prev_R @ curr_t) + prev_t 
         
         self.current_sim3 = (t_new, R_new, s_new)
+        
+    def get_frame_RT(self, frame_idx):
+        pose = self.current_chunk_data['aligned_poses'][frame_idx]
+        w2c = np.linalg.inv(pose)
+        return (
+            torch.from_numpy(w2c[:3, :3]).float(),
+            torch.from_numpy(w2c[:3, 3]).float()
+        )
         
     def process_single_chunk(self, images, chunk_idx=None):
         print(f"Loaded {len(images)} images")
@@ -171,13 +180,21 @@ class VGGT_Long:
 
         return aligned_points, (s_rel, R_rel, t_rel) 
     
-    def update(self, image_paths):
+    def update_submap(self, image_paths):
         images_crop = load_and_preprocess_images(image_paths, mode='crop', return_originals=False)
         images_crop = images_crop.to(self.device)
         
         previous_idx = self.current_chunk_idx
         current_idx = self.current_chunk_idx + 1
         current_data = self.process_single_chunk(images_crop, chunk_idx=current_idx)
+        
+        if not self.use_point_map:
+            depth_map = current_data["depth"]  # (S, H, W, 1)
+            conf = current_data["depth_conf"]  # (S, H, W)
+            world_points = unproject_depth_map_to_point_map(depth_map, current_data['extrinsic'], current_data['intrinsic'])
+            
+            current_data['world_points'] = world_points
+            current_data['world_points_conf'] = conf
         
         if current_idx > 0:
             print(f"Aligning chunk {current_idx} to chunk {previous_idx}")
@@ -195,10 +212,9 @@ class VGGT_Long:
                 conf_threshold=conf_threshold, config=self.config
             )
             
-            self.accumulate_sim3(s_rel, R_rel, t_rel)
+            self.update_current_sim3(s_rel, R_rel, t_rel)
+            aligned_points = apply_sim3_direct(current_data['world_points'], *self.current_sim3)
             
-        aligned_points = apply_sim3_direct(current_data['world_points'], *self.current_sim3)
-        
         points = aligned_points.reshape(-1, 3)
         colors = (current_data['images'].transpose(0, 2, 3, 1).reshape(-1, 3) * 255).astype(np.uint8)
         confs = current_data['world_points_conf'].reshape(-1)
@@ -214,18 +230,17 @@ class VGGT_Long:
         S[:3, :3] = self.current_sim3[0] * self.current_sim3[1] # s * R
         S[:3, 3] = self.current_sim3[2] # t
         current_chunk_poses = []
+        
         for extrinsic in current_data['extrinsic']:
             w2c = np.eye(4)
             w2c[:3, :] = extrinsic
             c2w = np.linalg.inv(w2c)
             aligned_c2w = S @ c2w
             current_chunk_poses.append(aligned_c2w)
-        
+        current_data['aligned_poses'] = np.stack(current_chunk_poses, axis=0)
         # current_data['depth_upsampled'] = joint_bilateral_upsampling_batch(depths = current_data['depth'], images = images)
         
         self.current_chunk_idx = current_idx
         self.current_chunk_data = current_data
-        self.current_chunk_poses = current_chunk_poses 
-        
         return current_data
         
