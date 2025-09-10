@@ -116,7 +116,7 @@ class VGGT_Long:
         s_new = prev_s * curr_s
         t_new = prev_s * (prev_R @ curr_t) + prev_t 
         
-        self.current_sim3 = (t_new, R_new, s_new)
+        self.current_sim3 = (s_new, R_new, t_new)
         
     def get_frame_RT(self, frame_idx):
         pose = self.current_chunk_data['aligned_poses'][frame_idx]
@@ -217,10 +217,12 @@ class VGGT_Long:
             aligned_points = apply_sim3_direct(current_data['world_points'], *self.current_sim3)
         else:
             aligned_points = current_data['world_points']
+        
             
-        points = aligned_points.reshape(-1, 3)
-        colors = (current_data['images'].transpose(0, 2, 3, 1).reshape(-1, 3) * 255).astype(np.uint8)
-        confs = current_data['world_points_conf'].reshape(-1)
+        # only save the last self.overlap points
+        points = aligned_points[:self.step].reshape(-1, 3)
+        colors = (current_data['images'][:self.step].transpose(0, 2, 3, 1).reshape(-1, 3) * 255).astype(np.uint8)
+        confs = current_data['world_points_conf'][:self.step].reshape(-1)
         save_path = os.path.join(self.aligned_point_cloud_dir, f'chunk_{current_idx}.ply')
         
         save_confident_pointcloud_batch(

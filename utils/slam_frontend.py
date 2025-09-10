@@ -64,6 +64,7 @@ class FrontEnd(mp.Process):
 
         for kf_id, kf_R, kf_T in keyframes:
             self.cameras[kf_id].update_RT(kf_R.clone(), kf_T.clone())
+            self.cleanup(kf_id)
 
     def cleanup(self, cur_frame_idx):
         self.cameras[cur_frame_idx].clean()
@@ -128,7 +129,7 @@ class FrontEnd(mp.Process):
                 self.vggtl.update_submap(color_paths)
                 
                 submap_viewpoints = {}
-                for frame_idx in range(start_idx, end_idx):
+                for frame_idx in range(start_idx, start_idx+self.vggtl.step):
                     frame_idx_in_submap = frame_idx - start_idx
                     Rt = self.vggtl.get_frame_RT(frame_idx_in_submap)
                     
@@ -147,7 +148,8 @@ class FrontEnd(mp.Process):
                 
                 pcd_path = os.path.join(self.vggtl.aligned_point_cloud_dir, f'chunk_{cur_submap_idx}.ply')
                 self.request_submap_mapping(cur_submap_idx, submap_viewpoints, pcd_path)
-                cur_frame_idx = end_idx
+                print(start_idx, end_idx, cur_frame_idx)
+                cur_frame_idx += self.vggtl.step
                 cur_submap_idx += 1
 
                 # self.q_main2vis.put(
@@ -180,7 +182,7 @@ class FrontEnd(mp.Process):
                     self.sync_backend(data)
                     self.requested_submaps -= 1
                     
-                elif data[0] == 'submap':
+                elif data[0] == 'submap_mapping':
                     self.sync_backend(data)
                     self.requested_submaps -= 1
 

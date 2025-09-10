@@ -155,7 +155,7 @@ class BackEnd(mp.Process):
                 continue
             random_viewpoint_stack.append(viewpoint)
 
-        for _ in range(iters):
+        for step in range(iters):
             self.iteration_count += 1
             self.last_sent += 1
 
@@ -244,36 +244,36 @@ class BackEnd(mp.Process):
                 # # compute the visibility of the gaussians
                 # # Only prune on the last iteration and when we have full window
                 if prune:
-                    if len(current_window) == self.config["Training"]["window_size"]:
-                        prune_mode = self.config["Training"]["prune_mode"]
-                        prune_coviz = 3
-                        self.gaussians.n_obs.fill_(0)
-                        for window_idx, visibility in self.occ_aware_visibility.items():
-                            self.gaussians.n_obs += visibility.cpu()
-                        to_prune = None
-                        if prune_mode == "odometry":
-                            to_prune = self.gaussians.n_obs < 3
-                            # make sure we don't split the gaussians, break here.
-                        if prune_mode == "slam":
-                            # only prune keyframes which are relatively new
-                            sorted_window = sorted(current_window, reverse=True)
-                            mask = self.gaussians.unique_kfIDs >= sorted_window[2]
-                            if not self.initialized:
-                                mask = self.gaussians.unique_kfIDs >= 0
-                            to_prune = torch.logical_and(
-                                self.gaussians.n_obs <= prune_coviz, mask
-                            )
-                        if to_prune is not None and self.monocular:
-                            self.gaussians.prune_points(to_prune.cuda())
-                            for idx in range((len(current_window))):
-                                current_idx = current_window[idx]
-                                self.occ_aware_visibility[current_idx] = (
-                                    self.occ_aware_visibility[current_idx][~to_prune]
-                                )
+                    # if len(current_window) == self.config["Training"]["window_size"]:
+                    prune_mode = self.config["Training"]["prune_mode"]
+                    prune_coviz = 3
+                    self.gaussians.n_obs.fill_(0)
+                    for window_idx, visibility in self.occ_aware_visibility.items():
+                        self.gaussians.n_obs += visibility.cpu()
+                    to_prune = None
+                    if prune_mode == "odometry":
+                        to_prune = self.gaussians.n_obs < 3
+                        # make sure we don't split the gaussians, break here.
+                    if prune_mode == "slam":
+                        # only prune keyframes which are relatively new
+                        sorted_window = sorted(current_window, reverse=True)
+                        mask = self.gaussians.unique_kfIDs >= sorted_window[2]
                         if not self.initialized:
-                            self.initialized = True
-                            Log("Initialized SLAM")
-                        # # make sure we don't split the gaussians, break here.
+                            mask = self.gaussians.unique_kfIDs >= 0
+                        to_prune = torch.logical_and(
+                            self.gaussians.n_obs <= prune_coviz, mask
+                        )
+                    if to_prune is not None and self.monocular:
+                        self.gaussians.prune_points(to_prune.cuda())
+                        for idx in range((len(current_window))):
+                            current_idx = current_window[idx]
+                            self.occ_aware_visibility[current_idx] = (
+                                self.occ_aware_visibility[current_idx][~to_prune]
+                            )
+                    if not self.initialized:
+                        self.initialized = True
+                        Log("Initialized SLAM")
+                    # # make sure we don't split the gaussians, break here.
                     return False
 
                 for idx in range(len(viewspace_point_tensor_acm)):
