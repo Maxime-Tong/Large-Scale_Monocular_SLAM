@@ -201,13 +201,13 @@ class VGGT_Long:
             print(f"Aligning chunk {current_idx} to chunk {previous_idx}")
             previous_data = self.current_chunk_data
             
-            prev_points = previous_data['world_points'][-self.overlap:]
-            curr_points = current_data['world_points'][:self.overlap]
-            prev_conf = previous_data['world_points_conf'][-self.overlap:]
-            curr_conf = current_data['world_points_conf'][:self.overlap]
+            overlap = min(self.overlap, len(image_paths))
+            prev_points = previous_data['world_points'][-overlap:]
+            curr_points = current_data['world_points'][:overlap]
+            prev_conf = previous_data['world_points_conf'][-overlap:]
+            curr_conf = current_data['world_points_conf'][:overlap]
 
             conf_threshold = min(np.median(prev_conf), np.median(curr_conf)) * 0.1
-            
             s_rel, R_rel, t_rel = weighted_align_point_maps(
                 prev_points, prev_conf, curr_points, curr_conf, 
                 conf_threshold=conf_threshold, config=self.config

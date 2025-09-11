@@ -108,6 +108,10 @@ class FrontEnd(mp.Process):
                 
                 tic.record()
                 if cur_frame_idx >= len(self.dataset):
+                    if self.requested_submaps > 0: # wait for all submaps sync
+                        time.sleep(0.1)
+                        continue
+                    
                     if self.save_results:
                         eval_ate(
                             self.cameras,
@@ -123,19 +127,20 @@ class FrontEnd(mp.Process):
                     break
                 
                 start_idx = cur_frame_idx
+                step_idx = min(start_idx + self.vggtl.step, len(self.dataset))
                 end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
                 
                 color_paths = self.dataset.color_paths[start_idx:end_idx]
                 self.vggtl.update_submap(color_paths)
                 
                 submap_viewpoints = {}
-                for frame_idx in range(start_idx, start_idx+self.vggtl.step):
+                for frame_idx in range(start_idx, step_idx):
                     frame_idx_in_submap = frame_idx - start_idx
-                    Rt = self.vggtl.get_frame_RT(frame_idx_in_submap)
                     
                     viewpoint = Camera.init_from_dataset(
                         self.dataset, frame_idx, projection_matrix
                     )
+                    Rt = self.vggtl.get_frame_RT(frame_idx_in_submap)
                     viewpoint.update_RT(*Rt)
                     self.cameras[frame_idx] = viewpoint
                     
@@ -148,7 +153,7 @@ class FrontEnd(mp.Process):
                 
                 pcd_path = os.path.join(self.vggtl.aligned_point_cloud_dir, f'chunk_{cur_submap_idx}.ply')
                 self.request_submap_mapping(cur_submap_idx, submap_viewpoints, pcd_path)
-                print(start_idx, end_idx, cur_frame_idx)
+                
                 cur_frame_idx += self.vggtl.step
                 cur_submap_idx += 1
 
