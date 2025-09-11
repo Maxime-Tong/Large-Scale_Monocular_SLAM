@@ -1,8 +1,61 @@
 import numpy as np
+import torch
 import matplotlib.pyplot as plt
 import cv2
 from PIL import Image
 import os
+
+def visualize_and_save_images(gt_image, rendering_img, save_dir, filename="comparison.png"):
+    """
+    可视化GT图像和渲染图像，并保存到指定目录
+    
+    参数:
+    gt_image: 可以是numpy数组、PIL图像或文件路径
+    rendering_img: 可以是numpy数组、PIL图像或文件路径
+    save_dir: 保存结果的目录路径
+    filename: 保存的文件名，默认为"comparison.png"
+    """
+    # 确保保存目录存在
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 处理输入图像（支持文件路径、numpy数组或PIL图像）
+    def process_image(img):
+        if isinstance(img, str):  # 如果是文件路径
+            return Image.open(img)
+        elif isinstance(img, np.ndarray):  # 如果是numpy数组
+            return Image.fromarray(img)
+        elif isinstance(img, Image.Image):  # 如果是PIL图像
+            return img
+        elif isinstance(img, torch.Tensor):
+            return Image.fromarray(img.detach().cpu().numpy())
+        else:
+            raise ValueError("不支持的图像格式，请提供文件路径、numpy数组或PIL图像")
+    
+    # 处理GT图像和渲染图像
+    gt_img_processed = process_image(gt_image)
+    rendering_img_processed = process_image(rendering_img)
+    
+    # 创建可视化图表
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    
+    # 显示GT图像
+    axes[0].imshow(gt_img_processed)
+    axes[0].set_title('Ground Truth Image')
+    axes[0].axis('off')
+    
+    # 显示渲染图像
+    axes[1].imshow(rendering_img_processed)
+    axes[1].set_title('Rendering Image')
+    axes[1].axis('off')
+    
+    # 调整布局并保存
+    plt.tight_layout()
+    save_path = os.path.join(save_dir, filename)
+    plt.savefig(save_path, bbox_inches='tight', dpi=300)
+    plt.close()
+    
+    print(f"图像已保存到: {save_path}")
+    return save_path
 
 def visualize_depth_map(depth_map, save_path, colormap='viridis', vmin=None, vmax=None):
     """

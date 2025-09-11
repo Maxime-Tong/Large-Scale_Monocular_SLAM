@@ -114,7 +114,7 @@ class SLAM:
         # img_dir = '/data/xthuang/SLAM/large_scale/data/video'
         # img_list = sorted(glob.glob(os.path.join(img_dir, "*.jpg")) + 
                                         # glob.glob(os.path.join(img_dir, "*.png")))
-        config = load_config_vggtl('vggtl/configs/base_config.yaml')
+        config = load_config_vggtl('vggtl/configs/tum.yaml')
         self.vggtl = VGGT_Long(save_dir=save_dir, config=config)
         self.frontend.vggtl = self.vggtl
 

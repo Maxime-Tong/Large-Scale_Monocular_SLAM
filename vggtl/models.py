@@ -96,7 +96,7 @@ class VGGT_Long:
         self.current_chunk_data = None
         self.current_sim3 = (1.0, np.eye(3), np.zeros(3))
         
-        self.use_point_map = False
+        self.use_point_map = True
         # if self.sky_mask:
         #     print('Loading skyseg.onnx...')
         #     # Download skyseg.onnx if it doesn't exist
@@ -181,7 +181,7 @@ class VGGT_Long:
         return aligned_points, (s_rel, R_rel, t_rel) 
     
     def update_submap(self, image_paths):
-        images_crop = load_and_preprocess_images(image_paths, mode='crop', return_originals=False)
+        images_crop = load_and_preprocess_images(image_paths, mode='crop')
         images_crop = images_crop.to(self.device)
         
         previous_idx = self.current_chunk_idx
@@ -203,8 +203,8 @@ class VGGT_Long:
             
             overlap = min(self.overlap, len(image_paths))
             prev_points = previous_data['world_points'][-overlap:]
-            curr_points = current_data['world_points'][:overlap]
             prev_conf = previous_data['world_points_conf'][-overlap:]
+            curr_points = current_data['world_points'][:overlap]
             curr_conf = current_data['world_points_conf'][:overlap]
 
             conf_threshold = min(np.median(prev_conf), np.median(curr_conf)) * 0.1
@@ -217,8 +217,7 @@ class VGGT_Long:
             aligned_points = apply_sim3_direct(current_data['world_points'], *self.current_sim3)
         else:
             aligned_points = current_data['world_points']
-        
-            
+         
         # only save the last self.overlap points
         points = aligned_points[:self.step].reshape(-1, 3)
         colors = (current_data['images'][:self.step].transpose(0, 2, 3, 1).reshape(-1, 3) * 255).astype(np.uint8)

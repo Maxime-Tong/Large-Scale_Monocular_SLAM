@@ -1,6 +1,7 @@
 import time
 
 import os
+import cv2
 import numpy as np
 import torch
 import torch.multiprocessing as mp
@@ -14,7 +15,25 @@ from utils.logging_utils import Log
 from utils.multiprocessing_utils import clone_obj
 from utils.pose_utils import update_pose
 from utils.slam_utils import get_loss_tracking, get_median_depth
+from utils.visual import visualize_and_save_images
 
+def eval_rendering(kf_indices, cameras, gaussians, dataset, pipe, background, save_dir):
+    import cv2
+    for kf in kf_indices:
+        viewpoint = cameras[kf]
+        gt_image, _, _ = dataset[kf]
+
+        rendering = render(viewpoint, gaussians, pipe, background)["render"]
+        image = torch.clamp(rendering, 0.0, 1.0)
+
+        gt = (gt_image.cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8)
+        pred = (image.detach().cpu().numpy().transpose((1, 2, 0)) * 255).astype(
+            np.uint8
+        )
+        gt = cv2.cvtColor(gt, cv2.COLOR_BGR2RGB)
+        pred = cv2.cvtColor(pred, cv2.COLOR_BGR2RGB)
+        visualize_and_save_images(gt, pred, save_dir, filename=f"{kf}.png")
+        
 class FrontEnd(mp.Process):
     def __init__(self, config):
         super().__init__()
@@ -136,7 +155,6 @@ class FrontEnd(mp.Process):
                 submap_viewpoints = {}
                 for frame_idx in range(start_idx, step_idx):
                     frame_idx_in_submap = frame_idx - start_idx
-                    
                     viewpoint = Camera.init_from_dataset(
                         self.dataset, frame_idx, projection_matrix
                     )
@@ -166,19 +184,29 @@ class FrontEnd(mp.Process):
                 #     )
                 # )
 
-                if (
-                    self.save_results
-                    and self.save_trj
-                    and len(self.kf_indices) % self.save_trj_kf_intv == 0
-                ):
-                    Log("Evaluating ATE at frame: ", cur_frame_idx)
-                    eval_ate(
-                        self.cameras,
-                        self.kf_indices,
-                        self.save_dir,
-                        cur_frame_idx,
-                        monocular=self.monocular,
-                    )
+                # if (
+                #     self.save_results
+                #     and self.save_trj
+                #     and len(self.kf_indices) % self.save_trj_kf_intv == 0
+                # ):
+                Log("Evaluating ATE at frame: ", cur_frame_idx)
+                eval_ate(
+                    self.cameras,
+                    self.kf_indices,
+                    self.save_dir,
+                    cur_frame_idx,
+                    monocular=self.monocular,
+                )
+                    
+                    # eval_rendering(
+                    #     self.kf_indices,
+                    #     self.cameras,
+                    #     self.gaussians,
+                    #     self.dataset,
+                    #     self.pipeline_params,
+                    #     self.background,
+                    #     'test_output/rendering'
+                    # )
                 toc.record()
                 torch.cuda.synchronize()
             else:
