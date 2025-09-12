@@ -44,13 +44,9 @@ import atexit
 atexit.register(cleanup_processes)
 
 
-module_path = os.path.join(os.path.dirname(__file__), 'vggtl')
-sys.path.insert(0, module_path)
-
-from models import VGGT_Long
-from loop_utils.config_utils import load_config as load_config_vggtl
-from vggt.utils.load_fn import load_and_preprocess_images
-
+import vggt_slam.slam_utils as vggt_slam_utils
+from vggt_slam.solver import Solver
+from vggt.models.vggt import VGGT
 
 class SLAM:
     def __init__(self, config, save_dir=None):
@@ -114,9 +110,18 @@ class SLAM:
         # img_dir = '/data/xthuang/SLAM/large_scale/data/video'
         # img_list = sorted(glob.glob(os.path.join(img_dir, "*.jpg")) + 
                                         # glob.glob(os.path.join(img_dir, "*.png")))
-        config = load_config_vggtl('vggtl/configs/tum.yaml')
-        self.vggtl = VGGT_Long(save_dir=save_dir, config=config)
-        self.frontend.vggtl = self.vggtl
+            
+        solver = Solver(
+            init_conf_threshold=25.0,
+            use_point_map=False,
+            use_sim3=False,
+            gradio_mode=False,
+            vis_stride = 1,
+            vis_point_size = 0.003,
+        )
+        solver.vggt = VGGT().to('cuda')
+        solver.vggt.load_state_dict(torch.load('weights/model.pt', map_location='cuda'), strict=False)
+        self.frontend.solver = solver
 
         self.backend.gaussians = self.gaussians
         self.backend.background = self.background
@@ -126,7 +131,6 @@ class SLAM:
         self.backend.frontend_queue = frontend_queue
         self.backend.backend_queue = backend_queue
         self.backend.live_mode = self.live_mode
-        self.backend.vggtl_point_cloud_dir = self.vggtl.aligned_point_cloud_dir
 
         self.backend.set_hyperparams()
 

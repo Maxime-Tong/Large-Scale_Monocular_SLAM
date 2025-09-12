@@ -16,3 +16,4 @@ wandb
 result*
 
 test_output
+weights/

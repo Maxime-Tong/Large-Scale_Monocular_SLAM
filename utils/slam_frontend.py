@@ -56,9 +56,10 @@ class FrontEnd(mp.Process):
         self.device = "cuda:0"
         self.pause = False
         
-        self.vggtl = None
-        self.chunk_data = None
-        self.use_vggtl_depth = False
+        self.submap_size = 16
+        self.overlap_size = 1
+        self.max_loops = 1
+        self.solver = None
 
     def set_hyperparams(self):
         self.save_dir = self.config["Results"]["save_dir"]
@@ -94,6 +95,7 @@ class FrontEnd(mp.Process):
     def run(self):
         cur_frame_idx = 0
         cur_submap_idx = 0
+        path_window = []
         projection_matrix = getProjectionMatrix2(
             znear=0.01,
             zfar=100.0,
@@ -146,40 +148,38 @@ class FrontEnd(mp.Process):
                         )
                     break
                 
-                start_idx = cur_frame_idx
-                step_idx = min(start_idx + self.vggtl.step, len(self.dataset))
-                end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
-                
-                color_paths = self.dataset.color_paths[start_idx:end_idx]
-                predictions = self.vggtl.update_submap(color_paths)
-                
-                submap_depths = {}
-                submap_viewpoints = {}
-                for frame_idx in range(start_idx, step_idx):
-                    frame_idx_in_submap = frame_idx - start_idx
-                    viewpoint = Camera.init_from_dataset(
-                        self.dataset, frame_idx, projection_matrix
-                    )
-                    Rt = self.vggtl.get_frame_RT(frame_idx_in_submap)
-                    viewpoint.update_RT(*Rt)
-                    self.cameras[frame_idx] = viewpoint
+                path_window.append(self.dataset.color_paths[cur_frame_idx])
+                if len(path_window) == self.submap_size + self.overlap_size or cur_frame_idx == len(self.dataset) - 1:
+                    predictions = self.solver.run_predictions(path_window, self.solver.vggt, self.max_loops)
+                    self.solver.add_points(predictions)
+                    self.solver.graph.optimize()
+                    self.solver.map.update_submap_homographies(self.solver.graph)
+                    path_window = path_window[-self.overlap_size:]
                     
-                    if frame_idx % self.kf_interval == 0:
-                        self.kf_indices.append(frame_idx)
+                    submap = self.solver.map.get_latest_submap()
+                    poses = submap.get_all_poses_world(ignore_loop_closure_frames=True)
+                    frame_ids = submap.get_frame_ids()
+                    print(poses.shape, frame_ids)
+                    print("Total number of submaps in map", self.solver.map.get_num_submaps())
+                    print("Total number of loop closures in map", self.solver.graph.get_num_loops())
+                    
+                    for idx, pose in enumerate(poses[:self.submap_size]):
+                        w2c = np.linalg.inv(pose)
+                        R = torch.from_numpy(w2c[:3, :3]).float()
+                        T = torch.from_numpy(w2c[:3, 3]).float()
                         
-                    
-                    depth = np.squeeze(predictions['depth'][frame_idx_in_submap])
-                    depth_upsampled = cv2.resize(depth, 
-                                                 (viewpoint.image_width, viewpoint.image_height), 
-                                                 interpolation=cv2.INTER_CUBIC).astype(np.float32)
-                    submap_depths[frame_idx] = depth_upsampled
-                    submap_viewpoints[frame_idx] = viewpoint
-                    # self.cleanup(frame_idx)
-                self.request_submap_mapping(cur_submap_idx, submap_viewpoints, submap_depths)
-                
-                cur_frame_idx += self.vggtl.step
-                cur_submap_idx += 1
+                        viewpoint = Camera.init_from_dataset(
+                            self.dataset, cur_frame_idx, projection_matrix
+                        )
+                        viewpoint.update_RT(R, T)
+                        frame_idx = cur_submap_idx * self.submap_size + idx
+                        self.cameras[frame_idx] = viewpoint
+                        if frame_idx % self.kf_interval == 0:
+                            self.kf_indices.append(frame_idx)
 
+                    cur_submap_idx += 1                     
+                cur_frame_idx += 1
+                
                 # self.q_main2vis.put(
                 #     gui_utils.GaussianPacket(
                 #         gaussians=clone_obj(self.gaussians),
@@ -193,7 +193,7 @@ class FrontEnd(mp.Process):
                     self.save_results
                     and self.save_trj
                     and len(self.kf_indices) > self.save_trj_kf_intv
-                    and not self.requested_init
+                    # and not self.requested_init
                 ):
                     self.save_trj_kf_intv += self.save_trj_kf_intv
                     Log("Evaluating ATE at frame: ", cur_frame_idx)
