@@ -48,6 +48,7 @@ class FrontEnd(mp.Process):
         self.monocular = config["Training"]["monocular"]
 
         self.requested_submaps = 0
+        self.requested_init = True
         self.kf_indices = []
 
         self.gaussians = None
@@ -70,8 +71,8 @@ class FrontEnd(mp.Process):
         self.window_size = self.config["Training"]["window_size"]
         self.single_thread = self.config["Training"]["single_thread"]
     
-    def request_submap_mapping(self, submap_idx, viewpoints, pcd_path):
-        msg = ["submap_mapping", submap_idx, viewpoints, pcd_path]
+    def request_submap_mapping(self, submap_idx, viewpoints, depth_maps):
+        msg = ["submap_mapping", submap_idx, viewpoints, depth_maps]
         self.backend_queue.put(msg)
         self.requested_submaps += 1
 
@@ -89,7 +90,7 @@ class FrontEnd(mp.Process):
         self.cameras[cur_frame_idx].clean()
         if cur_frame_idx % 10 == 0:
             torch.cuda.empty_cache()
-
+            
     def run(self):
         cur_frame_idx = 0
         cur_submap_idx = 0
@@ -150,8 +151,9 @@ class FrontEnd(mp.Process):
                 end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
                 
                 color_paths = self.dataset.color_paths[start_idx:end_idx]
-                self.vggtl.update_submap(color_paths)
+                predictions = self.vggtl.update_submap(color_paths)
                 
+                submap_depths = {}
                 submap_viewpoints = {}
                 for frame_idx in range(start_idx, step_idx):
                     frame_idx_in_submap = frame_idx - start_idx
@@ -165,12 +167,15 @@ class FrontEnd(mp.Process):
                     if frame_idx % self.kf_interval == 0:
                         self.kf_indices.append(frame_idx)
                         
-                    submap_viewpoints[frame_idx] = viewpoint             
-
+                    
+                    depth = np.squeeze(predictions['depth'][frame_idx_in_submap])
+                    depth_upsampled = cv2.resize(depth, 
+                                                 (viewpoint.image_width, viewpoint.image_height), 
+                                                 interpolation=cv2.INTER_CUBIC).astype(np.float32)
+                    submap_depths[frame_idx] = depth_upsampled
+                    submap_viewpoints[frame_idx] = viewpoint
                     # self.cleanup(frame_idx)
-                
-                pcd_path = os.path.join(self.vggtl.aligned_point_cloud_dir, f'chunk_{cur_submap_idx}.ply')
-                self.request_submap_mapping(cur_submap_idx, submap_viewpoints, pcd_path)
+                self.request_submap_mapping(cur_submap_idx, submap_viewpoints, submap_depths)
                 
                 cur_frame_idx += self.vggtl.step
                 cur_submap_idx += 1
@@ -184,19 +189,21 @@ class FrontEnd(mp.Process):
                 #     )
                 # )
 
-                # if (
-                #     self.save_results
-                #     and self.save_trj
-                #     and len(self.kf_indices) % self.save_trj_kf_intv == 0
-                # ):
-                Log("Evaluating ATE at frame: ", cur_frame_idx)
-                eval_ate(
-                    self.cameras,
-                    self.kf_indices,
-                    self.save_dir,
-                    cur_frame_idx,
-                    monocular=self.monocular,
-                )
+                if (
+                    self.save_results
+                    and self.save_trj
+                    and len(self.kf_indices) > self.save_trj_kf_intv
+                    and not self.requested_init
+                ):
+                    self.save_trj_kf_intv += self.save_trj_kf_intv
+                    Log("Evaluating ATE at frame: ", cur_frame_idx)
+                    eval_ate(
+                        self.cameras,
+                        self.kf_indices,
+                        self.save_dir,
+                        cur_frame_idx,
+                        monocular=self.monocular,
+                    )
                     
                     # eval_rendering(
                     #     self.kf_indices,
@@ -218,6 +225,11 @@ class FrontEnd(mp.Process):
                 elif data[0] == 'submap_mapping':
                     self.sync_backend(data)
                     self.requested_submaps -= 1
+                    self.requested_init = False
+                
+                elif data[0] == 'init':
+                    self.sync_backend(data)
+                    self.requested_init = False
 
                 elif data[0] == "stop":
                     Log("Frontend Stopped.")

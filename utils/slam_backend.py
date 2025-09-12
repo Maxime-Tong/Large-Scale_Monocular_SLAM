@@ -38,8 +38,6 @@ class BackEnd(mp.Process):
         self.initialized = not self.monocular
         self.keyframe_optimizers = None
         
-        self.vggtl_point_cloud_dir = None
-
     def set_hyperparams(self):
         self.save_results = self.config["Results"]["save_results"]
 
@@ -411,17 +409,19 @@ class BackEnd(mp.Process):
                 elif data[0] == "submap_mapping":
                     submap_id = data[1]
                     viewpoints = data[2]
-                    pcd_path = data[3]
-                    fused_point_cloud, features, scales, rots, opacities = self.gaussians.create_pcd_from_ply(pcd_path)
-                    self.gaussians.extend_from_pcd(fused_point_cloud, features, scales, rots, opacities, kf_id=submap_id)
+                    depth_maps = data[3]
 
                     iter_per_kf = self.mapping_itr_num
                     opt_params = []
                     current_window = []
                     for frame_idx in viewpoints:
+                        current_window.append(frame_idx)
+                        
                         viewpoint = viewpoints[frame_idx]
                         self.viewpoints[frame_idx] = viewpoint
-                        current_window.append(frame_idx)
+                        if frame_idx % 5 == 0:
+                            depth = depth_maps[frame_idx]
+                            self.add_next_kf(frame_idx, viewpoint, depth_map=depth)
                         
                         opt_params.append(
                             {
@@ -455,8 +455,13 @@ class BackEnd(mp.Process):
                                 "name": "exposure_b_{}".format(viewpoint.uid),
                             }
                         )
+                    
+                    if not self.initialized:
+                        self.initialize_map(submap_id, viewpoints[0])
+                        self.initialized = True
                         
                     self.keyframe_optimizers = torch.optim.Adam(opt_params)
+                    self.current_window = current_window
                     self.map(current_window, iters=iter_per_kf)
                     self.map(current_window, prune=True)
                     self.push_to_frontend("submap_mapping")   

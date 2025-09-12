@@ -47,12 +47,10 @@ def sim3_transform(prev_sim3, curr_sim3):
     t_new = prev_s * (prev_R @ curr_t) + prev_t
     return s_new, R_new, t_new
     
-def joint_bilateral_upsampling_batch(depths, images, radius=8, eps=1e-3):
-    B, H, W, C = images.shape
-    
+def upsampling_batch(depths, H, W):
     depths_upsampled = []
-    for depth, image in zip(depths, images):
-        # d_refined = cv2.ximgproc.guidedFilter(guide=image, src=d_init, radius=radius, eps=eps)
+    for depth in depths:
+        depth = np.squeeze(depth)
         d_refined = cv2.resize(depth, (W, H), interpolation=cv2.INTER_CUBIC).astype(np.float32)
         depths_upsampled.append(d_refined)
     return np.stack(depths_upsampled, axis=0)
@@ -219,30 +217,29 @@ class VGGT_Long:
             aligned_points = current_data['world_points']
          
         # only save the last self.overlap points
-        points = aligned_points[:self.step].reshape(-1, 3)
-        colors = (current_data['images'][:self.step].transpose(0, 2, 3, 1).reshape(-1, 3) * 255).astype(np.uint8)
-        confs = current_data['world_points_conf'][:self.step].reshape(-1)
-        save_path = os.path.join(self.aligned_point_cloud_dir, f'chunk_{current_idx}.ply')
+        # points = aligned_points[:self.step].reshape(-1, 3)
+        # colors = (current_data['images'][:self.step].transpose(0, 2, 3, 1).reshape(-1, 3) * 255).astype(np.uint8)
+        # confs = current_data['world_points_conf'][:self.step].reshape(-1)
         
-        save_confident_pointcloud_batch(
-            points=points, colors=colors, confs=confs, output_path=save_path,
-            conf_threshold=np.mean(confs) * self.config['Model']['Pointcloud_Save']['conf_threshold_coef'],
-            sample_ratio=self.config['Model']['Pointcloud_Save']['sample_ratio']
-        )
+        # save_path = os.path.join(self.aligned_point_cloud_dir, f'chunk_{current_idx}.ply')
+        # save_confident_pointcloud_batch(
+        #     points=points, colors=colors, confs=confs, output_path=save_path,
+        #     conf_threshold=np.mean(confs) * self.config['Model']['Pointcloud_Save']['conf_threshold_coef'],
+        #     sample_ratio=self.config['Model']['Pointcloud_Save']['sample_ratio']
+        # )
         
         S = np.eye(4)
         S[:3, :3] = self.current_sim3[0] * self.current_sim3[1] # s * R
         S[:3, 3] = self.current_sim3[2] # t
         current_chunk_poses = []
         
-        for extrinsic in current_data['extrinsic']:
+        for extrinsic in current_data['extrinsic'][:self.step]:
             w2c = np.eye(4)
             w2c[:3, :] = extrinsic
             c2w = np.linalg.inv(w2c)
             aligned_c2w = S @ c2w
             current_chunk_poses.append(aligned_c2w)
         current_data['aligned_poses'] = np.stack(current_chunk_poses, axis=0)
-        # current_data['depth_upsampled'] = joint_bilateral_upsampling_batch(depths = current_data['depth'], images = images)
         
         self.current_chunk_idx = current_idx
         self.current_chunk_data = current_data
