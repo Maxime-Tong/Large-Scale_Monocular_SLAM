@@ -1,6 +1,7 @@
 import time
 
 import numpy as np
+import cv2
 import torch
 import torch.multiprocessing as mp
 
@@ -65,8 +66,7 @@ class FrontEnd(mp.Process):
         valid_rgb = (gt_img.sum(dim=0) > rgb_boundary_threshold)[None]
         if self.monocular:
             if self.use_vggtl_depth:
-                frame_idx_in_chunk = cur_frame_idx - self.vggtl.current_chunk_idx * self.vggtl.step
-                initial_depth = torch.from_numpy(self.chunk_data['depth_upsampled'][frame_idx_in_chunk]).unsqueeze(0)
+                initial_depth = torch.from_numpy(viewpoint.depth_est).unsqueeze(0)
                 initial_depth[~valid_rgb.cpu()] = 0.
             elif depth is None:
                 initial_depth = 2 * torch.ones(1, gt_img.shape[1], gt_img.shape[2])
@@ -125,7 +125,7 @@ class FrontEnd(mp.Process):
             self.backend_queue.get()
 
         # Initialise the frame at the ground truth pose
-        viewpoint.update_RT(viewpoint.R_gt, viewpoint.T_gt)
+        # viewpoint.update_RT(viewpoint.R_gt, viewpoint.T_gt)
 
         self.kf_indices = []
         depth_map = self.add_new_keyframe(cur_frame_idx, init=True)
@@ -133,15 +133,8 @@ class FrontEnd(mp.Process):
         self.reset = False
 
     def tracking(self, cur_frame_idx, viewpoint):
-        prev = self.cameras[cur_frame_idx - self.use_every_n_frames]
-        viewpoint.update_RT(prev.R, prev.T)
-        # cur_frame_idx_in_chunk = cur_frame_idx - self.vggtl.current_chunk_idx * self.vggtl.step
-        # pose = self.vggtl.current_chunk_poses[cur_frame_idx_in_chunk]
-        # w2c = np.linalg.inv(pose)
-        # viewpoint.update_RT(
-        #     torch.from_numpy(w2c[:3, :3]).float(),
-        #     torch.from_numpy(w2c[:3, 3]).float()
-        # )
+        # prev = self.cameras[cur_frame_idx - self.use_every_n_frames]
+        # viewpoint.update_RT(prev.R, prev.T)
 
         opt_params = []
         opt_params.append(
@@ -359,16 +352,6 @@ class FrontEnd(mp.Process):
                     continue
                 else:
                     self.backend_queue.put(["unpause"])
-                    
-            if self.vggtl is not None:
-                if cur_frame_idx < len(self.dataset) and cur_frame_idx >= (self.vggtl.current_chunk_idx + 1) * self.vggtl.step:
-                    start_idx = cur_frame_idx
-                    end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
-                    
-                    color_paths = self.dataset.color_paths[start_idx:end_idx]
-                    self.chunk_data = self.vggtl.update(color_paths)
-                    # if self.initialized:
-                    # self.request_chunk_init(cur_frame_idx, self.vggtl.aligned_point_cloud_dir + f'/chunk_{self.vggtl.current_chunk_idx}.ply')
 
             if self.frontend_queue.empty():
                 tic.record()
@@ -398,12 +381,32 @@ class FrontEnd(mp.Process):
                 if not self.initialized and self.requested_keyframe > 0:
                     time.sleep(0.01)
                     continue
+                
+                if cur_frame_idx >= (self.vggtl.current_chunk_idx + 1) * self.vggtl.step:
+                    start_idx = cur_frame_idx
+                    end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
+                    
+                    color_paths = self.dataset.color_paths[start_idx:end_idx]
+                    self.chunk_data = self.vggtl.update(color_paths)
+                    # if self.initialized:
+                    # self.request_chunk_init(cur_frame_idx, self.vggtl.aligned_point_cloud_dir + f'/chunk_{self.vggtl.current_chunk_idx}.ply')
 
                 viewpoint = Camera.init_from_dataset(
                     self.dataset, cur_frame_idx, projection_matrix
                 )
                 viewpoint.compute_grad_mask(self.config)
-
+                
+                frame_idx_in_chunk = cur_frame_idx - self.vggtl.current_chunk_idx * self.vggtl.step
+                R, T = self.vggtl.get_frame_RT(frame_idx_in_chunk)                
+                viewpoint.update_RT(
+                    torch.from_numpy(R).float(), 
+                    torch.from_numpy(T).float()
+                )
+                
+                depth_est = self.vggtl.get_frame_depth(frame_idx_in_chunk)
+                depth_est_upsampled = cv2.resize(depth_est, (self.dataset.width, self.dataset.height), interpolation=cv2.INTER_NEAREST)
+                viewpoint.depth_est = depth_est_upsampled
+                
                 self.cameras[cur_frame_idx] = viewpoint
 
                 if self.reset:

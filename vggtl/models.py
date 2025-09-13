@@ -94,7 +94,6 @@ class VGGT_Long:
         
         self.current_chunk_idx = -1
         self.current_chunk_data = None
-        self.current_chunk_poses = None
         self.sim3_list = []
         # if self.sky_mask:
         #     print('Loading skyseg.onnx...')
@@ -140,29 +139,18 @@ class VGGT_Long:
         # np.save(save_path, predictions)
         return predictions
     
-    def numpy_to_pypose_sim3(self, s: float, R_mat: np.ndarray, t_vec: np.ndarray):
-        """Convert numpy s,R,t to pypose Sim3"""
-        q = R.from_matrix(R_mat).as_quat()  # [x,y,z,w]
-        # pypose requires [t, q, s] format
-        data = np.concatenate([t_vec, q, np.array([s])])
-        return pp.Sim3(torch.from_numpy(data).float().to(self.device))
+    def get_frame_RT(self, frame_idx):
+        pose = self.current_chunk_data['aligned_poses'][frame_idx]
+        w2c = np.linalg.inv(pose)
+        R = w2c[:3, :3]
+        t = w2c[:3, 3]
+        return R, t
     
-    def align_chunk_pair(self, source_chunk_data, target_chunk_data):
-        source_points = source_chunk_data['world_points']
-        source_confs = source_chunk_data['world_points_conf']
-        target_points = target_chunk_data['world_points']
-        target_confs = target_chunk_data['world_points_conf']
-        
-        s_rel, R_rel, t_rel = weighted_align_point_maps(
-            target_points, target_confs, source_points, source_confs,
-            conf_threshold=self.conf_threshold, config=self.config
-        )
-        aligned_points = apply_sim3_direct(source_points, s_rel, R_rel, t_rel)
-
-        return aligned_points, (s_rel, R_rel, t_rel) 
+    def get_frame_depth(self, frame_idx):
+        return self.current_chunk_data['depth'][frame_idx]
     
     def update(self, image_paths):
-        images_crop, images = load_and_preprocess_images(image_paths, mode='crop', return_originals=True)
+        images_crop = load_and_preprocess_images(image_paths, mode='crop')
         images_crop = images_crop.to(self.device)
         
         previous_idx = self.current_chunk_idx
@@ -173,10 +161,11 @@ class VGGT_Long:
             print(f"Aligning chunk {current_idx} to chunk {previous_idx}")
             previous_data = self.current_chunk_data
             
-            prev_points = previous_data['world_points'][-self.overlap:]
-            curr_points = current_data['world_points'][:self.overlap]
-            prev_conf = previous_data['world_points_conf'][-self.overlap:]
-            curr_conf = current_data['world_points_conf'][:self.overlap]
+            overlap = min(self.overlap, len(image_paths))
+            prev_points = previous_data['world_points'][-overlap:]
+            curr_points = current_data['world_points'][:overlap]
+            prev_conf = previous_data['world_points_conf'][-overlap:]
+            curr_conf = current_data['world_points_conf'][:overlap]
 
             conf_threshold = min(np.median(prev_conf), np.median(curr_conf)) * 0.1
             
@@ -187,38 +176,36 @@ class VGGT_Long:
             
             previous_sim3 = self.sim3_list[-1]
             current_sim3 = sim3_transform(previous_sim3, (s_rel, R_rel, t_rel))
+            aligned_points = apply_sim3_direct(current_data['world_points'], *current_sim3)
         else:
             current_sim3 = (1.0, np.eye(3), np.zeros(3))
-            
-        aligned_points = apply_sim3_direct(current_data['world_points'], *current_sim3)
+            aligned_points = current_data['world_points']
         
-        points = aligned_points.reshape(-1, 3)
-        colors = (current_data['images'].transpose(0, 2, 3, 1).reshape(-1, 3) * 255).astype(np.uint8)
-        confs = current_data['world_points_conf'].reshape(-1)
-        save_path = os.path.join(self.aligned_point_cloud_dir, f'chunk_{current_idx}.ply')
+        # points = aligned_points.reshape(-1, 3)
+        # colors = (current_data['images'].transpose(0, 2, 3, 1).reshape(-1, 3) * 255).astype(np.uint8)
+        # confs = current_data['world_points_conf'].reshape(-1)
+        # save_path = os.path.join(self.aligned_point_cloud_dir, f'chunk_{current_idx}.ply')
         
-        save_confident_pointcloud_batch(
-            points=points, colors=colors, confs=confs, output_path=save_path,
-            conf_threshold=np.mean(confs) * self.config['Model']['Pointcloud_Save']['conf_threshold_coef'],
-            sample_ratio=self.config['Model']['Pointcloud_Save']['sample_ratio']
-        )
+        # save_confident_pointcloud_batch(
+        #     points=points, colors=colors, confs=confs, output_path=save_path,
+        #     conf_threshold=np.mean(confs) * self.config['Model']['Pointcloud_Save']['conf_threshold_coef'],
+        #     sample_ratio=self.config['Model']['Pointcloud_Save']['sample_ratio']
+        # )
         
         S = np.eye(4)
         S[:3, :3] = current_sim3[0] * current_sim3[1] # s * R
         S[:3, 3] = current_sim3[2] # t
         current_chunk_poses = []
-        for extrinsic in current_data['extrinsic']:
+        for extrinsic in current_data['extrinsic'][:self.step]:
             w2c = np.eye(4)
             w2c[:3, :] = extrinsic
             c2w = np.linalg.inv(w2c)
             aligned_c2w = S @ c2w
             current_chunk_poses.append(aligned_c2w)
-        
-        current_data['depth_upsampled'] = joint_bilateral_upsampling_batch(depths = current_data['depth'], images = images)
+        current_data['aligned_poses'] = np.stack(current_chunk_poses, axis=0)
         
         self.current_chunk_idx = current_idx
         self.current_chunk_data = current_data
-        self.current_chunk_poses = current_chunk_poses 
         self.sim3_list.append(current_sim3)
         
         return current_data

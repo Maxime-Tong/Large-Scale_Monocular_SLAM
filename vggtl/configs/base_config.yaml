@@ -1,8 +1,8 @@
 Weights:
-  VGGT: './vggtl/weights/model.pt'
-  DBoW: './vggtl/weights/ORBvoc.txt'
-  SALAD: './vggtl/weights/dino_salad.ckpt'
-  DNIO: './vggtl/weights/dinov2_vitb14_pretrain.pth'
+  VGGT: '../weights/model.pt'
+  DBoW: '../weights/ORBvoc.txt'
+  SALAD: '../weights/dino_salad.ckpt'
+  DNIO: '../weights/dinov2_vitb14_pretrain.pth'
 
 Model:
   chunk_size: 60
