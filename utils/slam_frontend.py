@@ -386,8 +386,7 @@ class FrontEnd(mp.Process):
                     start_idx = cur_frame_idx
                     end_idx = min(start_idx + self.vggtl.chunk_size, len(self.dataset))
                     
-                    color_paths = self.dataset.color_paths[start_idx:end_idx]
-                    self.chunk_data = self.vggtl.update(color_paths)
+                    self.chunk_data = self.vggtl.update((start_idx, end_idx))
                     # if self.initialized:
                     # self.request_chunk_init(cur_frame_idx, self.vggtl.aligned_point_cloud_dir + f'/chunk_{self.vggtl.current_chunk_idx}.ply')
 
@@ -490,11 +489,14 @@ class FrontEnd(mp.Process):
                 cur_frame_idx += 1
 
                 if (
-                    self.save_results
-                    and self.save_trj
-                    and create_kf
-                    and len(self.kf_indices) % self.save_trj_kf_intv == 0
+                    # self.save_results
+                    # and self.save_trj
+                    # and create_kf
+                    # and len(self.kf_indices) % self.save_trj_kf_intv == 0
+                    len(self.kf_indices) % 10 == 0
                 ):
+                    self.vggtl.loop_optimization(cur_frame_idx)
+                    
                     Log("Evaluating ATE at frame: ", cur_frame_idx)
                     eval_ate(
                         self.cameras,
