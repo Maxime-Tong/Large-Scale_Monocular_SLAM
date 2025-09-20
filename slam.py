@@ -128,7 +128,6 @@ class SLAM:
         self.backend.frontend_queue = frontend_queue
         self.backend.backend_queue = backend_queue
         self.backend.live_mode = self.live_mode
-        self.backend.vggtl_point_cloud_dir = self.vggtl.aligned_point_cloud_dir
 
         self.backend.set_hyperparams()
 
