@@ -195,8 +195,7 @@ class VGGT_Long:
         
         if not is_loop and range_2 is None:
             extrinsics = predictions['extrinsic']
-            chunk_range = self.chunk_indices[chunk_idx]
-            self.all_camera_poses.append((chunk_range, extrinsics))
+            self.all_camera_poses.append((range_1, extrinsics))
         
         predictions['depth'] = np.squeeze(predictions['depth'])
         
@@ -213,17 +212,17 @@ class VGGT_Long:
             
             save_path = os.path.join(save_dir, filename)
             np.save(save_path, predictions)
-                    
-        return predictions if is_loop or range_2 is not None else None
+
+        torch.cuda.empty_cache()
+        return predictions
     
     def get_frame_RT(self, frame_idx):
         chunk_idx = frame_idx // self.step
         frame_idx_in_chunk = frame_idx % self.step
         chunk_range, chunk_extrinsics = self.all_camera_poses[chunk_idx]
-        
-        cumulative_sim3_list = accumulate_sim3_transforms(self.sim3_list)
+
         if chunk_idx > 0:
-            s, R, t = cumulative_sim3_list[chunk_idx - 1]
+            s, R, t = self.cumulative_sim3_list[chunk_idx - 1]
             S = np.eye(4)
             S[:3, :3] = s * R
             S[:3, 3] = t
@@ -234,12 +233,36 @@ class VGGT_Long:
             c2w = np.linalg.inv(w2c)
             transformed_c2w = S @ c2w  # Be aware of the left multiplication!
             transformed_w2c = np.linalg.inv(transformed_c2w)
-            R = transformed_w2c[:3, :3]
-            t = transformed_w2c[:3, 3]
+        else:
+            transformed_w2c = chunk_extrinsics[frame_idx_in_chunk]
+            
+        R = transformed_w2c[:3, :3]
+        t = transformed_w2c[:3, 3]
         return R, t
     
+    def update_frame_RT(self, R, t, frame_idx):
+        # Reverse the function get_frame_RT
+        chunk_idx = frame_idx // self.step
+        frame_idx_in_chunk = frame_idx % self.step
+        
+        w2c = np.eye(4)
+        w2c[:3, :3] = R
+        w2c[:3, 3] = t
+        c2w = np.linalg.inv(w2c)
+        if chunk_idx > 0:
+            s, R, t = self.cumulative_sim3_list[chunk_idx - 1]
+            S = np.eye(4)
+            S[:3, :3] = s * R
+            S[:3, 3] = t
+            
+            S_inv = np.linalg.inv(S)
+            c2w = S_inv @ c2w
+            
+        self.all_camera_poses[chunk_idx][1][frame_idx_in_chunk] = c2w[:3, :]
+    
     def get_frame_depth(self, frame_idx):
-        return self.current_chunk_data['depth'][frame_idx]
+        frame_idx_in_chunk = frame_idx % self.step
+        return self.current_chunk_data['depth'][frame_idx_in_chunk]
     
     def update(self, chunk_range):
         previous_chunk_idx = self.current_chunk_idx
@@ -264,6 +287,11 @@ class VGGT_Long:
             )
             
             self.sim3_list.append(current_sim3)
+        
+            if self.cumulative_sim3_list != []:            
+                self.cumulative_sim3_list.append(sim3_transform(self.cumulative_sim3_list[-1], current_sim3))
+            else:
+                self.cumulative_sim3_list.append(current_sim3)
 
         # if self.save_result:        
         #     points = aligned_points.reshape(-1, 3)
@@ -297,7 +325,7 @@ class VGGT_Long:
                 range2 = get_frame_range(chunk2, idx2, self.half_window)
 
                 key = (chunk_idx1_0based, chunk_idx2_0based)
-                if key not in self.loop_seen:
+                if key not in self.loop_seen and chunk_idx1_0based != chunk_idx2_0based:
                     self.loop_seen.add(key)
 
                     loop_predictions = self.process_single_chunk(range1, range_2=range2, is_loop=True)
@@ -356,4 +384,44 @@ class VGGT_Long:
                 break
             self.loop_ptr += 1
         print(self.loop_sim3_list)
-        self.sim3_list = self.loop_optimizer.optimize(self.sim3_list, self.loop_sim3_list)
+        if self.loop_sim3_list != []:
+            input_abs_poses = self.loop_optimizer.sequential_to_absolute_poses(self.sim3_list)
+            self.sim3_list = self.loop_optimizer.optimize(self.sim3_list, self.loop_sim3_list)
+            optimized_abs_poses = self.loop_optimizer.sequential_to_absolute_poses(self.sim3_list)
+
+            def extract_xyz(pose_tensor):
+                poses = pose_tensor.cpu().numpy()
+                return poses[:, 0], poses[:, 1], poses[:, 2]
+            
+            x0, _, y0 = extract_xyz(input_abs_poses)
+            x1, _, y1 = extract_xyz(optimized_abs_poses)
+
+            # Visual in png format
+            plt.figure(figsize=(8, 6))
+            plt.plot(x0, y0, 'o--', alpha=0.45, label='Before Optimization')
+            plt.plot(x1, y1, 'o-', label='After Optimization')
+            for i, j, _ in self.loop_sim3_list:
+                plt.plot([x0[i], x0[j]], [y0[i], y0[j]], 'r--', alpha=0.25, label='Loop (Before)' if i == 5 else "")
+                plt.plot([x1[i], x1[j]], [y1[i], y1[j]], 'g-', alpha=0.35, label='Loop (After)' if i == 5 else "")
+            plt.gca().set_aspect('equal')
+            plt.title("Sim3 Loop Closure Optimization")
+            plt.xlabel("x")
+            plt.ylabel("z")
+            plt.legend()
+            plt.grid(True)
+            plt.axis("equal")
+            save_path = os.path.join(self.output_dir, 'sim3_opt_result.png')
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # self.sim3_list = self.loop_optimizer.optimize(self.sim3_list, self.loop_sim3_list)
+            self.cumulative_sim3_list = accumulate_sim3_transforms(self.sim3_list)
+        
+    def sync_cameras(self, cameras):
+        for frame_idx in cameras:
+            R, T = self.get_frame_RT(frame_idx)
+            viewpoint = cameras[frame_idx]
+            viewpoint.update_RT(
+                torch.from_numpy(R).float(),
+                torch.from_numpy(T).float(),
+            )

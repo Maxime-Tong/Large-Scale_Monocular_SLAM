@@ -116,7 +116,7 @@ class SLAM:
                                         # glob.glob(os.path.join(img_dir, "*.png")))
         self.vggtl = VGGT_Long(save_dir=save_dir, config=load_config_vggtl('vggtl/configs/base_config.yaml'))
         self.vggtl.img_list = self.dataset.color_paths
-        self.vggtl.init_loop_pairs()
+        # self.vggtl.init_loop_pairs()
         
         self.frontend.vggtl = self.vggtl
 
