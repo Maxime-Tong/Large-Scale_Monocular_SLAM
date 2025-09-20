@@ -305,7 +305,7 @@ class VGGT_Long:
                     point_map_loop = loop_predictions['world_points'][:range1[1] - range1[0]]
                     conf_loop = loop_predictions['world_points_conf'][:range1[1] - range1[0]]
                     chunk_a_rela_begin = range1[0] - self.chunk_indices[chunk_idx1_0based][0]
-                    chunk_a_rela_end = chunk_a_rela_begin + range1[1] - range2[0]
+                    chunk_a_rela_end = chunk_a_rela_begin + range1[1] - range1[0]
 
                     chunk_data_a = np.load(os.path.join(self.result_unaligned_dir, f"chunk_{chunk_idx1_0based}.npy"), allow_pickle=True).item()
                     
