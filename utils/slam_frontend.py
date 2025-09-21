@@ -133,9 +133,11 @@ class FrontEnd(mp.Process):
         self.reset = False
 
     def tracking(self, cur_frame_idx, viewpoint):
-        if not self.use_vggtl:
-            prev = self.cameras[cur_frame_idx - self.use_every_n_frames]
-            viewpoint.update_RT(prev.R, prev.T)
+        # if not self.use_vggtl:
+            # prev = self.cameras[cur_frame_idx - self.use_every_n_frames]
+            # viewpoint.update_RT(prev.R, prev.T)
+        prev = self.cameras[cur_frame_idx - self.use_every_n_frames]
+        viewpoint.update_RT(prev.R, prev.T)
 
         opt_params = []
         opt_params.append(
@@ -397,6 +399,9 @@ class FrontEnd(mp.Process):
                 )
                 viewpoint.compute_grad_mask(self.config)
                 
+                # if cur_frame_idx % self.kf_interval == 0:
+                    # self.kf_indices.append(cur_frame_idx)
+                
                 if self.use_vggtl:
                     R, T = self.vggtl.get_frame_RT(cur_frame_idx)                
                     viewpoint.update_RT(
@@ -496,10 +501,13 @@ class FrontEnd(mp.Process):
                     and create_kf
                     and len(self.kf_indices) % self.save_trj_kf_intv == 0
                 ):
-                    if self.use_vggtl:
-                        self.vggtl.loop_optimization(cur_frame_idx)
-                        self.vggtl.sync_cameras(self.cameras)
-                     
+                    # eval_kf_frame += self.save_trj_kf_intv
+                    
+                    # if self.use_vggtl:
+                    #     self.vggtl.loop_optimization(cur_frame_idx)
+                    #     self.vggtl.sync_cameras(self.cameras)
+                    
+                    Log("kf_idx: ", self.kf_indices)
                     Log("Evaluating ATE at frame: ", cur_frame_idx)
                     eval_ate(
                         self.cameras,
